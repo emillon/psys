@@ -1,0 +1,77 @@
+// void proc_A(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         wait(sid);
+//         printf("A - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);
+//             __asm__ __volatile__ ("cli");
+//         }
+//         exit(0);
+// }
+// 
+// void proc_B(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         printf("B - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);__asm__ __volatile__ ("cli");
+//         signal(sid);
+//     }
+//         exit(0);
+// }
+
+********************************************************************************** 
+// void proc_A(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         wait(sid1);
+//         printf("A - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);
+//             __asm__ __volatile__ ("cli");
+//         }
+//         exit(0);
+// }
+// 
+// void proc_B(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         printf("B - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);__asm__ __volatile__ ("cli");
+//         signal(sid);
+//     }
+//         exit(0);
+// }
+
+**********************************************************************************
+// void proc_A(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         signal(sid1);
+//         wait(sid1);
+//         printf("A - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);
+//             __asm__ __volatile__ ("cli");
+//         }
+//         exit(0);
+// }
+// 
+// void proc_B(void)
+// {
+//     int i, n=0;
+//     for(n=0;n<2;) {
+//         printf("B - %d\n", n++);
+//         __asm__ __volatile__ ("sti");
+//         for(i=50000000;i;i--);__asm__ __volatile__ ("cli");
+//         signal(sid);
+//     }
+//         exit(0);
+// }

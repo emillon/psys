@@ -1,0 +1,7 @@
+- indentation K&R
+- soft tabs, 4 espaces
+- noms en anglais
+- prototypes documentes
+- macros pour les numeros de ports d'I/O
+- nom_composes_avec_des_underscores et pas enCamelCase
+- 80 colonnes !!!

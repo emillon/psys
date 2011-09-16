@@ -1,0 +1,64 @@
+1  : exit
+2  : start
+3  : kill
+4  : getpid
+5  : getppid
+6  : waitpid
+7  : waitclock
+8  : getprio
+9  : chprio
+10 : wait
+11 : trywait
+12 : signal
+13 : signaln
+
+==================
+O argument
+
+unsigned long current clock();
+int getpid(void);
+
+------------------
+1 argument
+
+void cons echo(int on);
+void exit(int retval);
+int kill(int pid);
+int scount(int sem);
+int screate(count);
+int sdelete(sem);
+int getprio(int pid);
+int signal(int sem);
+void wait clock(unsigned long clock);
+
+------------------
+2 arguments
+
+int chprio (int pid, int newprio);
+void clock settings(unsigned long *quartz, unsigned long *ticks);
+unsigned long cons read(char *string, unsigned long length);
+int cons write(const char *str, long size);
+int signaln(sem, short count);
+int sreset(int sem, short count);
+int try_wait(int sem);
+int wait(int sem);
+int waitpid(int pid, int *retvalp);
+
+------------------
+3 arguments
+
+
+------------------
+4 arguments
+
+
+------------------
+5 arguments
+
+int start(int (*ptfunc)(void *), unsigned long ssize, int prio, const char *name, void *arg);
+
+------------------
+6 arguments
+
+
+==========================

@@ -1,0 +1,911 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[latin1]{inputenc}
+\usepackage[cyr]{aeguill}
+%\usepackage[frenchb]{babel}
+
+\usepackage{listings} % a inclure pour la fonction listing
+\usepackage{color} % on en a besoin pour utiliser les couleurs
+\usepackage{graphicx, epsfig}
+
+\usepackage{pstricks,pst-node}
+\usepackage{url}
+
+\newcounter{leaves}
+\newcounter{directories}
+
+\newenvironment{directory}[2][\linewidth]%
+{%
+\setcounter{leaves}{0}%
+\addtocounter{directories}{1}
+\edef\directoryname{D\thedirectories}
+\begin{minipage}[t]{#1}% <-------- !!!
+  \setlength{\parindent}{\linewidth}
+  \addtolength{\parindent}{-\dirshrink\parindent}
+  \parskip0pt%
+  \noindent
+  \Rnode[href=-\dirshrink]{\directoryname}{\parbox[t]{#1}{#2}}%
+  \par
+}  
+{\end{minipage}}
+
+
+\newcommand{\file}[2][]{%
+  \addtocounter{leaves}{1}%
+  \edef\leaflabel{L\theleaves\directoryname}%
+  \par
+  \Rnode{\leaflabel}{\parbox[t]{\dirshrink\linewidth}{#2\hfill#1}}%
+  \ncangle[angleA=270,angleB=180,armB=0,nodesep=1pt]
+    {\directoryname}{\leaflabel}%
+\par}
+
+\newcommand{\dirshrink}{.95} 
+
+
+
+
+
+\definecolor{grey}{rgb}{0.95,0.95,0.95}
+\definecolor{colKeys}{rgb}{0,0,0.8} 
+\definecolor{colString}{rgb}{0.0,0.5,0.0} 
+\definecolor{colComments}{rgb}{0.5,0.0,0.5} 
+
+
+% don't need the following. simply use defaults
+\setlength{\baselineskip}{11.0pt}
+\setlength{\parskip}{3pt plus 2pt}
+\setlength{\parindent}{20pt}
+\setlength{\oddsidemargin}{0.0cm}
+\setlength{\evensidemargin}{0.0cm}
+\setlength{\marginparsep}{0.75cm}
+\setlength{\marginparwidth}{2.5cm}
+\setlength{\marginparpush}{1.0cm}
+\setlength{\textwidth}{150mm}
+\setlength{\textheight}{10.0in}
+\setlength{\topmargin}{-0.5cm}
+\setlength{\footskip}{0cm}
+\setlength{\headheight}{0.0in}
+
+\pagestyle{empty} % use if page numbers not wanted
+
+\title{Projet système}  
+\author{Maxime Boucher - Pierre Fredon - Etienne Millon} 
+\date{19 juin 2008}
+\renewcommand{\contentsname}{Table des matières}
+
+\begin{document}
+\maketitle
+
+\lstset{numbers=left, language=Ada, tabsize=2, frame=single, breaklines=true, basicstyle=\ttfamily,
+   numberstyle=\tiny\ttfamily, framexleftmargin=13mm, xleftmargin=12mm}
+
+\lstset{%configuration de listings
+float=hbp,%
+basicstyle=\ttfamily\small, %
+identifierstyle={}, %
+keywordstyle=\color{colKeys}\textbf, %
+stringstyle=\color{colString}, %
+commentstyle=\color{colComments}\textit, %
+columns=flexible, %
+tabsize=4, %
+%frame=trBL, %
+frameround=tttt, %
+extendedchars=true, %
+showspaces=false, %
+showstringspaces=false, %
+numbers=none, %
+numberstyle=\tiny, %
+breaklines=true, %
+breakautoindent=true, %
+captionpos=b,%
+xrightmargin=-1.5cm, %
+xleftmargin=0.5cm
+} 
+
+\tableofcontents \clearpage
+\section* {Introduction}
+L'objectif de ce projet était de réaliser un noyau monolithique simple sur architecture intel IA32. Ce noyau permet l'exécution de programmes simples, mais néanmoins significatifs, et gère le multitâche. Le système offre un shell, gère la distinction des modes utilisateur et superviseur, permet la synchronisation entre processus à l'aide de semaphores et possède un système de gestion de fichiers simple.
+
+Ce projet a été très intéressant car il nous a permis de mettre en oeuvre les notions théoriques que nous avons vues au cours de cette année en cours de SEPC puis CSE. Une fois encore, nous avons pu mesurer combien il est difficile de réaliser un système pourtant simple à partir de notions simples. 
+\section	{Architecture du système}
+
+\subsection {Commutation de contexte}
+
+Dans tout système multitâche, le temps processeur doit être partagé entre toutes les taches prêtes à l'exécution.
+Pour cela, les contextes d'exécution de celles-ci doivent être sauvegardés en mémoire. Pour qu'une tâche récupère le processeur,
+il suffit alors de restaurer le contexte sauvegardé.
+
+\subsubsection {Contexte d'exécution}
+
+Chaque tâche possède sa propre pile en mémoire. Pour l'instant, nous supposerons qu'une tâche ne s'execute qu'en mode noyau.
+Elle ne possède donc qu'une seule pile. Un pointeur vers le sommet de pile est sauvegardé dans le registre ESP.
+Le contexte d'exécution d'une tâche contient donc la valeur de ce registre lors de la perte du processeur.\\
+
+Un contexte d'exécution est repésenté par un champ de type context donc voici la description:\\
+
+\begin{lstlisting}
+typedef struct {
+    unsigned long           esp_kernel;             /* ESP kernel stack */
+	/* ... */
+} context;
+\end{lstlisting}
+
+Le tableau suivant contient les valeurs de tous les contextes d'exécution. Il est stocké statiquement dans le code
+du noyau dans le ficher context.h.\\
+
+\begin{lstlisting}
+#define	NBPROC	10000
+
+context tab_proc[NBPROC];		/* array of task descriptors */
+\end{lstlisting}
+
+Le nombre maximum de tâches est donc majoré par la constante NBPROC. Cette dernière est fixée lors de la
+compilation du noyau.
+
+\subsubsection {Commutation}
+
+La commutation de contexte sauvegarde en premier l'état de la tâche courante puis charge ensuite dans le regitre ESP
+le pointeur de sommet de pile de la prochaine tâche.\\
+
+La fonction effectuant la commutation est écrite en assembleur dans le fichier context\_switch.S. Elle prend en paramètre
+l'adresse du contexte de la tâche courante et de la prochaine tâche.\\
+
+\begin{lstlisting}
+.global context_switch
+context_switch:
+    push   %ebp
+    mov    %esp,    %ebp
+
+    push   %ebp
+
+    mov  8(%ebp),   %eax    /* %eax = &old_context */
+    mov    %esp , 0(%eax)   /* old->esp_kernel = %esp */
+
+    mov 12(%ebp),   %eax    /* %eax = &new_context */
+    mov  0(%eax),   %esp    /* %esp = new->esp_kernel */
+	
+	/* ... */
+
+    pop    %ebp
+
+    leave
+    ret
+\end{lstlisting}
+
+\vspace{1cm}
+
+L'adresse du contexte courant est accessible à 8(\%ebp) et celle du prochain contexte à 12(\%ebp).
+
+\subsection {Processus légers}
+
+Un processus dans le système est identifié par un muméro unique appelé PID. Celui-ci correspond à l'indice +1 dans le tableau tab\_proc du contexte du processus.
+Chaque processus à pour père le processus qu'il l'a crée. De plus une priorité est affectée à chacun des processus pour la gestion de l'ordonnancement.
+L'état de chaque processus(actif, activable, attente fils...) est aussi stocké dans son contexte.\\
+
+\begin{lstlisting}
+enum proc_state {
+    STATE_ACTIVE,
+    STATE_ACTIVABLE,
+    STATE_WAIT_SEM,
+    STATE_WAIT_IO,
+    STATE_WAIT_CHILD,
+    STATE_ASLEEP,
+    STATE_ZOMBIE,
+    STATE_DEAD
+};
+
+typedef struct {
+	/* ... */
+    int                     pid;                    /* process PID */
+    int                     priority;               /* process priority */
+    int                     pid_parent;             /* process father */
+    int                     pid_wait;               /* child waited */
+    enum proc_state         state;                  /* process state */
+    list_t                  children;               /* children list */
+    link                    activable;              /* process activable list */
+    int                     killed;                 /* process was killed */
+    int                     val_ret;                /* return value */
+    int                     valide;                 /* PID used */
+    char *                  name;                   /* process name */
+	/* ... */
+} context;
+
+\end{lstlisting}
+
+\subsubsection {Ordonnancement}
+
+L'ordonnanceur a pour but de choisir quelle processus doit récupérer le processeur. Il est appelé à chaque toc de l'horloge système.
+Il est aussi sollicité lors de chaque changement de priorité ou d'état d'un processus lors d'un appel système. Son exécution se fait lors d'un appel à la fonction scheduler(). Dans cette dernière, on trouve un appel à la fonction context\_switch vue précédement.\\
+
+L'ordonnanceur récupère le PID du processus à exécuter le plus prioritaire dans une file avec priorité nommée proc\_queue\_activ.
+Tout processus qui passe dans l'état Activable est inséré dans cette file. En conséquence, tout processus quittant cet état est supprimé de la file.\\ 
+
+La fonction scheduler() est écrite dans le fichier context.c.\\
+
+\begin{lstlisting}
+struct list_link proc_queue_activ;                  /* activable process list */
+
+unsigned int pid_cour;  							/* current PID */
+
+void scheduler() {
+	/* ... */
+	
+	/* get an activable processus with a maximum priority */
+	elem = queue_top(&proc_queue_activ, context, activable);
+
+    /* there is an activable process */
+    if(elem != 0) {
+        /* activable process must be run */
+		if(   tab_proc[pid_cour-1].state != STATE_ACTIVE
+		   || elem->priority >= tab_proc[pid_cour-1].priority) {
+
+			/* remove process to run from activable process list */
+			queue_del(elem, activable);
+
+			/* current process active */
+			if(tab_proc[pid_cour-1].state == STATE_ACTIVE) {
+				/* adding process to activable process list */
+				wakeup_process(pid_cour);
+			}
+
+			/* changing current process */
+			pid_prec = pid_cour;
+			pid_cour = elem->pid;
+			tab_proc[pid_cour-1].state = STATE_ACTIVE;
+
+			/* switching context */
+			context_switch(&(tab_proc[pid_prec-1]),
+						   &(tab_proc[pid_cour-1]));
+		}
+	}
+	/* ... */
+}
+
+\end{lstlisting}
+
+\subsubsection {Hiérarchie des processus}
+
+Tous les processus ont un père sauf un, appelé Init. Ce processus de PID 1 est lancé au démarrage du système n'a pas de père. Pour permettre à tous ses fils de
+s'exécuter, sa priorité est minimale. De plus, ce processus ne peut être tué par un appel à la fonction kill().\\
+
+Lorsqu'un processus meurt avant ses fils, ces derniers sont alors rattachés au processus Init. En outre, un processus qui a pour père Init ne devient
+jamais zombie. Il est tué automatiquement à sa terminaison.\\
+
+\subsection {Sémaphores}
+
+Pour permettre l'exclusion mutuelle, le système propose des sémaphores suivant la sémantique de Dijktra. Une fonction wait() réalise le P() alors
+qu'une fonction signal réalise le V().
+Nous avons choisis, lors d'un signal de réveiller le premier processus à s'être endormi. Nous avons vu plus tard, lors des tests, que le reveillé devait
+être l'endormi le plus prioritaire.\\
+
+Un sémaphore est représenté par un champ de type semaphore :\\
+
+\begin{lstlisting}
+typedef struct {
+    short int c;                /* Counter */
+    list_t proc_wait;           /* Waiting processes */
+    list_t proc_wait_reset;     /* Processes to be awaken by a 'reset' */
+    list_t proc_wait_delete;    /* Processes to be awaken by a 'delete' */
+    int valide;                 /* Valid entry */
+    int deleted;                /* If !0 this means that processes are
+                                    waiting for it (see proc_wait_delete) */
+} semaphore;
+\end{lstlisting}
+
+\vspace{1cm}
+
+La liste proc\_wait représente les processus en attente sur un wait(). Lors d'unsignal(), un processus est enlevé en tête de liste. Il est ensuite inséré dans la file des processus activables.\\
+
+La liste proc\_wait\_reset représente les processus reveillés à la suite d'un sreset mais qui n'ont pas encore pu récupérer le processeur. A la terminaison du wait(), un processus se retire de cette liste.\\
+
+La liste proc\_wait\_delete est le pendant de la liste proc\_wait\_reset mais pour la fonction sedelete().\\
+
+Lors d'un sreset(resp. sdelete), tous les processus dans la liste proc\_wait sont rendus activables puis insérés dans la liste proc\_wait\_reset(resp. proc\_wait\_delete). Les trois listes sont donc exclusives. En conséquence, à la terminaison d'un wait(), un processus regarde si il est dans l'une des deux listes(reset et delete) pour savoir si son revei est normal ou du à un sdelete() ou sreset().\\
+
+Les descripteurs de sémaphore sont stockés dans un tableau de taille NBSEM. Cette constante est fixée à la compilation.\\
+
+\begin{lstlisting}
+#define NBSEM   10000
+
+semaphore semaphores[NBSEM];    /* array of semaphore descriptors */
+\end{lstlisting}
+
+\vspace{1cm}
+
+Lorsqu'un processus est tué par un appel à la fonction kill() et qu'il est en attente sur un wait(), le sémaphore est informé par un appel à la fonction notify\_kill(). Nous avons choisi de toujours incrémenter le compteur du sémaphore lors de cet événement. Pour des raisons de performances, un processus stocke dans son contexte l'identifiant du sémaphore qu'il l'a endormi :\\
+
+\begin{lstlisting}
+typedef struct {
+    /* ... */
+    int    sid_wait;                                /* SID waited */
+    /* ... */
+} context;
+\end{lstlisting}
+
+\vspace{1cm}
+
+Lors d'un signal(), le système réveille le premier processus endormi et non le plus priotaire. Nous avons remarqué cette erreur plus tard lors de l'exécution des tests fournis.\\
+
+\subsection {Mode noyau/mode utilisateur}
+
+Aujourd'hui dans un système d'exploitation, la notion de sécurité est essentielle. Un utilisateur ne peut accéder directement au coeur du noyau(code, données...). Pour assurer cette protection, le noyau utilise une protection matérielle du processeur X86 : le mode protégé. Le noyau s'exécute avec un niveau de protection 0 et les processus utilisateur avec un niveau de protection 3.\\
+
+Pour exécuter une fonction du système d'exploitation, le programme utilisateur doit appeler une fonction proposée par le système d'exploitation. Cette fonction modifie des données du système et donc s'exécute en mode noyau. Un processus utilisateur peut donc s'exécuter en mode noyau et en mode utilisateur. Chaque processus doit donc possèder deux piles. La première située dans l'espace mémoire utilisateur permet d'exécuter le code du processus. La seconde située dans l'espace mémoire noyau permet d'exécuter les appels systèmes.
+
+\subsubsection {Commuter entre deux processus utilisateurs}
+
+La commutation de processus a lieu lors d'une interruption d'horloge. L'ordonnanceur est alors appelé. Celui-ci s'exécute en mode noyau. Le processeur doit donc savoir lors de l'interruption sur quelle pile se placer. Pour cela, une table présente en mémoire noyau est consultée : la TSS(Task State Segment). Dans la première entrée le processeur lit l'adresse de la pile à utiliser et dans la deuxième entrée le segment du code noyau.\\
+
+Cette table doit donc être mise à jour à chaque changement de contexte dans la fonction context\_switch :\\
+
+\begin{lstlisting}
+.global context_switch
+context_switch:
+    push %ebp
+    mov  %esp, %ebp
+
+    push %ebp
+
+    mov 8(%ebp),  %eax    // %eax = &old_context
+    mov   %esp, 0(%eax)   // old->esp_kernel = %esp
+
+    mov 12(%ebp),  %eax   // %eax = &new_context
+    mov 0(%eax),  %esp    // %esp = new->esp_kernel
+    
+    mov  4(%eax), %ebx    // %ebx = new->kernel_stack
+    mov 20(%eax), %ecx    // %ecx = new->stack_size
+    add %ecx, %ebx        // %ebx = new->kernel_stack + %ecx
+    mov %ebx, 0x20004     // TSS(0) = new->esp_kernel
+    mov $KERNEL_DS, %eax  // %eax = KERNEL_DS
+    mov %eax, 0x20008     // TSS(1) = %eax
+
+    /* ... */
+
+    pop %ebp
+
+    leave
+    ret
+\end{lstlisting}
+
+\vspace{1cm}
+
+L'adresse de chaque pile doit donc être stockée dans le contexte d'exécution d'un processus pour la mise à jour de la TSS. La fonction noyau demarre sur une pile vide donc l'adresse à insérer dans la TSS est le bas la pile.\\
+
+\begin{lstlisting}
+typedef struct {
+    unsigned long           esp_kernel;             /* ESP kernel stack */
+    unsigned long *         kernel_stack;           /* @ kernel stack */
+    unsigned long           esp_user;               /* ESP user stack */
+    unsigned long *         user_stack;             /* @ user stack */
+    unsigned long           user_stack_size;        /* user stack size
+                                                       in unsigned long */
+    unsigned long           kernel_stack_size;      /* kernel stack size
+                                                       in unsigned long */
+    /* ... */
+} context;
+\end{lstlisting}
+
+\vspace{1cm}
+
+La routine d'interruption d'horloge est donc la suivante ecrite dans le fichier context\_switch.S est donc la suivante:\\
+
+\begin{lstlisting}
+.global int32
+int32:
+    /* backup registers  */
+    push %eax
+    push %ebx
+    push %ecx
+    push %edx
+    push %ebp
+    push %esi
+    push %edi
+    push %ds
+    push %es
+    push %fs
+    push %gs
+
+    incl nb_interrupt      /* increase the number of interrupt since boot */
+    
+
+    mov $0x20, %al         
+    outb %al, $0x20
+    
+    call update_timer      /* waitclock managment */
+
+    call scheduler         
+
+    /* registers restauration */
+    pop %gs
+    pop %fs
+    pop %es
+    pop %ds
+    pop %edi
+    pop %esi
+    pop %ebp
+    pop %edx
+    pop %ecx
+    pop %ebx
+    pop %eax
+
+    iret
+\end{lstlisting}
+
+\vspace{1cm}
+
+Les registres sont sauvegardés et restaurés au début et la fin du traitement d'interruption. De plus une fonction reveillant les processus en attente sur un waitclock() est appelé avant l'ordonnanceur.
+
+\subsubsection {Démarrer un processus en mode utilisateur}
+
+Le seul moyen pour changer de mode avec le processeur X86 est de passer par le méchanisme d'interruption. Le choix du processus à exécuter est fait par l'ordonnanceur en mode noyau. Pour démarrer un processus, il faut donc passer du mode noyau au mode utilisateur. Ce passage se fait par l'intermédiaire d'un retour d'interruption.\\
+
+\paragraph {Pile kernel}
+
+Un processus est pris en charge par l'ordonnanceur dès que celui-ci est inséré dans la liste des processus activables. Le premier lancement d'un processus se fait donc lors d'un appel à la fonction context\_switch(). La pile kernel d'un processus doit donc être initialisée en cela.\\
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=14cm]{pile.eps}
+\end{figure}
+
+\vspace{1cm}
+
+Les cinq registres en bas de pile sont utilisés par le iret pour passer en mode utilisateur et lancer le processus. Ils seront plus tard resauvegardés au même endroit par l'interruption horloge ou par l'appel système.\\
+
+A la fin de la fonction context\_switch, le processeur saute automatiquement(ret) à l'adresse situé au sommet de pile. A la fin de cette fonction le processeur sautera donc l'adresse de la fonction \_iret(). Lors des futurs changements de contexte, l'adresse de retour ne sera plus \_iret() mais l'adresse de l'instruction suivant l'appel à context\_switch(dans scheduler()).
+
+\paragraph {Pile utilisateur}
+
+L'utilisateur a la possibilité de passer un paramètre à la fonction de demarrage d'un processus. Pour que ce paramètre puisse être accessible, il doit donc se trouver dans la pile utilisateur.\\
+
+De plus, un processus peut se terminer sans un appel explicite à l'appel système exit(). Une adresse de retour doit donc se situer dans la pile. Cette adresse de retour est un pointeur sur une fonction \_exit() qui effectuent un appel système exit(0).\\
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=14cm]{pile_user.eps}
+\end{figure}
+
+
+
+\subsubsection {Les appels système}
+
+Puisque le code utilisateur fonctionne avec un niveau de protection 3 (minimal), il faut trouver un moyen de pouvoir accéder à certaines primitives du noyau (dont l'affichage par exemple !). Pour ce faire, on utilise le mécanisme d'interruptions fourni par le processeur : on utilise l'interruption 49, accessible par l'utilisateur ($DPL = 3$).
+
+Plus précisément, on passe un code correspondant à la fonction à appeller dans le registre \url{EAX}, puis les arguments dans les registres \url{EBX},\url{ECX}, \url{EDX}, \url{ESX} et \url{EDI}.
+
+\newpage
+
+Au niveau de l'implémentation, il a fallu être astucieux pour éviter la duplication de code. Nous avons donc utilisé quelques macros :
+
+\begin{lstlisting}
+#define DEF_SYSCALL2(name,code) \
+        .global name;\
+        name:\
+            push %ebp;\
+            mov  %esp,%ebp;\
+            REGISTER_PUSH;\
+            mov  $##code, %eax;\
+            mov  8(%ebp), %ebx;\
+            mov 12(%ebp), %ecx;\
+            int  $49;\
+            REGISTER_POP;\
+            leave;\
+            ret;
+
+DEF_SYSCALL2(waitpid,           SYSCALL_WAITPID)
+DEF_SYSCALL2(chprio,            SYSCALL_CHPRIO)
+\end{lstlisting}
+
+Bien sûr, une fois en mode noyau, il faut trouver un moyen de récupérer le nombre d'arguments d'un appel système donnés. Nous avons adopté la convention suivante pour les numéros d'appel système :
+
+\begin{itemize}
+\item 0x00 - 0x1f : 0 argument
+\item 0x20 - 0x3f : 1 argument
+\item 0x40 - 0x5f : 2 arguments
+\item 0x60 - 0x7f : 3 arguments
+\item 0x80 - 0x9f : 4 arguments
+\item 0xa0 - 0xbf : 5 arguments
+\end{itemize}
+
+Au final, la table des numéros d'appel système était assez remplie, puisque sur 192 appels disponibles, nous en avons défini 42 (fortuitement !). Au final, puisque 32 bits sont disponibles, nous aurions pu séparer, en prenant par exemple la plage 0x00000000-0x01000000 pour 0 argument, etc.
+
+Pour en revenir aux appels système eux-mêmes : le gestionnaire d'interruption associé au vecteur 49 appelle, selon le code d'appel système, la bonne fonction \url{syscall_handlerX} (X nombre d'arguments). En interne, cette fonction va chercher le bon appel système (défini en mode noyau) à l'aide d'un tableau de pointeurs de fonctions, rendant le code plus lisible (cf. \url{kernel/syscall_handlers.c}).
+
+\begin{lstlisting}
+void syscall_handler2(unsigned long code, unsigned long arg1,
+                      unsigned long arg2)
+{
+    in_syscall=code;
+    syscalls_2[code](arg1, arg2);
+    in_syscall=0xff;
+}
+\end{lstlisting}
+
+La variable \url{in_syscall} sert de protection pour les appels système. En effet, certains appels système renvoient une valeur par pointeur : un utilisateur mal intentionné peut ainsi lire ou écrire à n'importe quel endroit de la mémoire, puisque les appels système sont exécutés avec le niveau maximal de privilèges.
+
+\begin{lstlisting}
+/* Safety checks */
+
+int is_in_syscall(int code)
+{
+    return in_syscall==code;
+}
+
+static inline int is_pointer_userspace(const void* p)
+{
+    return (unsigned long) p >= (unsigned long) 0x1000000;
+}
+
+void* check_pointer(const void* p, int code)
+{
+    if (is_in_syscall(code) && !is_pointer_userspace(p)) {
+        return (void*) 0;
+    }
+    return (void*) p;
+}
+\end{lstlisting}
+
+\section    {Communication inter-processus (IPC): Signaux}
+ 
+ \subsection {Primitives}
+ 
+ Cette partie est une extension que nous avions prévu de réaliser. Nous l'avons implémentée, mais, malheureusement, nous n'avons pas eu le temps de la débugger pour la faire fonctionner.
+ Les fonctions accessibles à l'utilisateur sont: \textbf{sigaction (int signalid,(void*) ad\_trt)} et \textbf {signal\_send(int pid, int signalid)}.
+ 
+\textbf{void sigaction (int signalid,(void*) ad\_trt)}: cette procedure associe, pour le processus l'appelant, au signal de numero signalid la procedure
+ad\_trt.
+
+\textbf{void signal\_send(int pid, int signalid)}: cette procedure envoie au processus de numéro pid un signal de numéro signalid
+
+ \subsection {Fonctionnement global}
+ 
+ Les signaux sont numérotés de 0 à NBSIG, par défaut fixé à 32. Un traitement de signal par défaut existe et se contente de faire un return. Les exécutions de traitements de signaux sont atomiques, c'est à dire qu'elle ne peuvent être interrompues par un autre traitement de signal du processus courant, et ont lieu au changement de processus. Une fois le signal traité, le processus passe la main.
+ 
+ Les procedures \textbf{sigaction} et \textbf{signal\_send} sont des appels systèmes.
+  
+ \subsection {Outils implémentés}
+ 
+\textbf{void trt\_sigs(void)}: appelée au changement de contexte, vérifie si le processus sur lequel on veut switcher a reçu un signal et s'il n'en traite pas déjà un. Si c'est le cas alors elle réalise une sauvegarde de la pile noyau, modifie l'adresse du processus à appeler et push sur la pile utlisateur associée l'adresse de la fonction \textbf{sig\_return}.
+
+\textbf{void sig\_return(void)}: se charge d'indiquer que le traitement est terminé, de restaurer la pile noyau du processus et d'appeler l'ordonnanceur.
+
+\textbf{void sig\_default}: réalise un simple retour de fonction.
+
+\subsection {Code}
+
+\begin{lstlisting}
+void sigaction(int signalid, void* ad_trt){
+    assert(signalid>=1 && signalid<=NBSIG);
+    tab_proc[pid_cour-1].sigmap[signalid]=ad_trt;
+    return;
+}
+
+void signal_send(	int pid, int signalid){
+    assert(tab_proc[pid-1].valide==1);
+    assert(signalid>=1 && signalid<=NBSIG);
+    list_put_first (tab_proc[pid-1].sigs,signalid);
+    printf("    on vient d'envoyer du signal a %d \n", pid);
+    return;
+}
+
+void trt_sigs(void){
+    int signalid;
+    void *trt_sig;
+    size_t nb_elem= STACK_SIZE / sizeof(unsigned long);
+    if (pid_cour==0) return;
+    if (!list_is_empty(tab_proc[pid_cour-1].sigs) && tab_proc[pid_cour-1].cur_sig==0){
+        tab_proc[pid_cour-1].cur_sig=1;
+        tab_proc[pid_cour-1].ex_ebp    = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-7] );
+        tab_proc[pid_cour-1].ad_iret   = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-6]);
+        tab_proc[pid_cour-1].ad_proc   = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-5]);
+        tab_proc[pid_cour-1].cs        = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-4] );
+        tab_proc[pid_cour-1].eflags    = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-3] );
+        tab_proc[pid_cour-1].esp       = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-2] );
+        tab_proc[pid_cour-1].ss        = ( tab_proc[pid_cour-1].kernel_stack[nb_elem-1] );
+
+        signalid=list_get_last(tab_proc[pid_cour-1].sigs);
+        trt_sig=tab_proc[pid_cour-1].sigmap[signalid-1];
+
+        tab_proc[pid_cour-1].kernel_stack[nb_elem-5] = (unsigned long) trt_sig;
+        tab_proc[pid_cour-1].esp_user -= 4;
+        *((unsigned long*)tab_proc[pid_cour-1].esp_user) = (unsigned long) adSigReturn;
+
+        tab_proc[pid_cour-1].kernel_stack[nb_elem-2] = tab_proc[pid_cour-1].esp_user;
+        tab_proc[pid_cour-1].sigmap[signalid-1]=(void*)ad_sig_default;
+    }
+    return;
+}
+void sig_return(void){
+    size_t nb_elem= STACK_SIZE / sizeof(unsigned long);
+    tab_proc[pid_cour-1].cur_sig=0;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-7] )    = tab_proc[pid_cour-1].ex_ebp;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-6] )    = tab_proc[pid_cour-1].ad_iret;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-5] )    = tab_proc[pid_cour-1].ad_proc;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-4] )    = tab_proc[pid_cour-1].cs;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-3] )    = tab_proc[pid_cour-1].eflags;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-2] )    = tab_proc[pid_cour-1].esp;
+        ( tab_proc[pid_cour-1].kernel_stack[nb_elem-1] )    = tab_proc[pid_cour-1].ss;
+    scheduler();
+}
+
+char* ad_sig_default = (char*) 0;
+
+
+\end{lstlisting}
+
+\section    {Pagination}
+
+Avec uniquement les spécifications du projet, la protection mémoire est très rudimentaire : il y a deux espaces séparés (noyau et utilisateur), et la seule restriction est que le code en mode utilisateur n'a pas accès à la mémoire du noyau (en dessous de 16 MB).
+
+Ainsi, tous les processus partagent une mémoire commune : le code des programmes (.text), mais aussi leurs données (.rodata, .data). Même le tas et les piles sont accessibles entre processus. D'un côté, cela permet de partager facilement de la mémoire entre processus, mais c'est aussi une énorme faille de sécurité : on peut modifier à la volée du code en cours d'exécution !
+
+Une solution est d'attribuer à chaque processus sa propre table des pages.
+Plus précisément, chaque processus a accès à sa mémoire (.text, .data, .rodata, .bss), son tas, 
+
+En ajoutant un espace paginé vers le segment nul situé entre le tas et la pile, on peut, de plus, repérer les débordements de pile : alors qu'avec le système de base, la pile écrase la section .data sans prévenir, cela provoquerait des défauts de page que l'on pourrait récupérer.
+
+Faute de temps, nous n'avons pas pu mener à bien les développements nécessaire à cette partie. Nous avons uniquement écrit les scripts d'édition de lien permettant de charger du code à l'adresse physique 512 MB, afin de se préparer à passer à des adresses virtuelles.
+
+\section    {Système de fichiers virtuel (VFS)}
+
+Afin de fournir à l'utilisateur une abstraction de haut niveau, nous avons mis en place un système de fichiers virtuel (VFS pour Virtual FileSystem). Ainsi, on met en place une couche d'abstraction supplémentaire entre l'utilisateur (et en particulier, le shell) et le noyau.
+
+Le VFS rend disponible la notion de fichier, de répertoire, de lecture, d'écriture. Comme sous UNIX, une abstraction intéressante est d'unifier la notion de ressource et celle de fichier. Ainsi, en plus de fournir un espace de stockage, le VFS permet d'accéder à des informations sur le noyau (en particulier les processus et les sémaphores).
+
+\begin{figure}[h!]
+\begin{directory}{\url{/}}
+\file[ProcFS]{\url{proc/}}
+\file[SemFS]{\url{sem/}}
+\file{\begin{directory}{\url{prog/}}
+    \file[programmes utilisateur]{\dots}
+\end{directory}
+}
+\file[SysFS]{\url{sys/}}
+\file[Périphériques]{\url{dev/}}
+\end{directory}
+\end{figure}
+
+\subsection {Interface}
+
+\begin{lstlisting}
+/* Open a file. Return a file descriptor, or -1 on error */
+int open (const char *name);
+
+/* Close a file descriptor. Return 0 on success, <0 on error */
+int close (int fd);
+
+/*
+ * Read len bytes from fd to buf.
+ * Return bytes effectively read, -1 on error, 0 at end of file.
+ */
+int read (int fd, char* buf, unsigned long len);
+
+/*
+ * Write len bytes from buf to fd.
+ * Return bytes effectively written, -1 on error.
+ */
+int write (int fd, const char* buf, unsigned long len);
+
+/*
+ * Fill dirp with nth entry from directory opened at fd
+ * Return value :
+ * -1 on error
+ *  0 at directory end
+ *  1 if ok
+ */
+int readdir (int fd, struct dirent *dirp, int n);
+
+/* Get information from a file */
+int fstat   (int fd, struct stat *s);
+
+/* Get current working directory */
+char* getcwd (char* buf, size_t len);
+
+/* Change working directory */
+int   chdir  (const char *path);
+\end{lstlisting}
+
+\subsection {Systèmes de fichiers implémentés}
+\subsubsection {SysFS - Gestion des paramètres du noyau}
+L'utilisateur a parfois besoin de passer des paramètres à un pilote spécifique du noyau. Par exemple, activer ou non l'écho local ou changer la couleur de fond d'un terminal.
+Plusieurs méthodes existent : la plus naturelle est de définir un appel système, mais comme ces appels sont souvent très spécifiques au périphérique, ils sont susceptibles d'être différents d'un système à l'autre. Une autre solution est d'encapsuler ces appels dans un "sous-appel système" appellé ioctl (Input/Output ConTroL).
+Enfin, on peut abstraire ces appels grâce à des lectures et écritures dans des fichiers virtuels. Pour son élégance, c'est cette solution qui a été choisie.  Chaque unité du noyau peut définir ses propres fichiers dans SysFS, ainsi que les callbacks open, read, write et close associés à chaque fichier.
+
+\begin{figure}[h!]
+\begin{directory}{\url{sys/}}
+    \file{\begin{directory}{\url{console/}}
+        \file[Couleur de premier plan]{\url{fg}}
+        \file[Couleur d'arrière-plan]{\url{bg}}
+        \file[Clignotement du curseur]{\url{blink}}
+        \file[Écho local]{\url{echo}}
+        \file[Contrôle du tampon de la console]{\url{buffered}}
+    \end{directory}
+    }
+\end{directory}
+\end{figure}
+
+\subsubsection {ProcFS - Gestion des processus}
+
+Pour obtenir des informations sur les processus (état, parent, etc), comme peuvent le faire les appels systèmes getpid, getppid, etc, un système de fichiers spécial a été mis en place. Il contient un sous-répertoire par processus.
+
+\begin{figure}[h!]
+\begin{directory}{\url{proc/}}
+    \file[un répertoire par processus]{\url{1/}}
+    \file{\begin{directory}{\url{2/}}
+        \file[PID du parent]{\url{parent}}
+        \file{\url{state}}
+        \file{
+            \begin{directory}{\url{fd/}}
+            \file[Entrée standard]{\url{0/}}
+            \file[Sortie standard]{\url{1/}}
+            \file{\begin{directory}{\url{5/}}
+                \file[Nom du fichier ouvert]{\url{filename}}
+            \end{directory}
+            }
+            \end{directory}
+        }
+    \end{directory}
+    }
+\end{directory}
+\end{figure}
+
+A partir de cette arborescence, on peut réimplémenter la commande \url{ps} en mode utilisateur : il suffit de la parcourir.
+
+\subsubsection {SemFS - Gestion des sémaphores}
+
+De la même manière, la commande \url{sinfo} peut être réimplémentée : il suffit d'avoir un système de fichiers listant les sémaphores.
+
+\begin{figure}[h!]
+\begin{directory}{\url{sem/}}
+    \file[un répertoire par sémaphore]{\url{1/}}
+    \file{\url{2/}}
+    \file{\dots}
+\end{directory}
+\end{figure}
+
+\subsubsection {/dev - Périphériques}
+
+A des fins de tests, nous avons aussi pu implémenter des fichiers "intelligents" comme les \textit{device nodes} d'UNIX. Ainsi notre système possède un fichier \url{/dev/zero} qui fait lire des zéros, \url{/dev/answer} qui fait lire des "42" (utile pour tester), et \url{/dev/null} dans lequel les lectures échouent et les écritures réussisent (en étant ignorées).
+
+Le répertoire \url{/dev} contient également des fichiers correspondant à des fichiers, notamment \url{/dev/console} : \url{read} et \url{write} sur ce fichier appellent respectivement cons\_read et cons\_write. Les consoles virtuelles sont aussi présentes dans \url{/dev} (cf. paragraphe suivant).
+
+\begin{figure}[h!]
+\begin{directory}{\url{dev/}}
+\file{\url{zero}}
+\file{\url{answer}}
+\file{\url{null}}
+\file{\url{console}}
+\file[Clavier]{\url{kbd}}
+\file{\begin{directory}{\url{vc/}}
+    \file[Consoles virtuelles]{\url{0}}
+    \file{\url{1}}
+    \file{\url{2}}
+    \file{\url{3}}
+\end{directory}
+}
+\end{directory}
+\end{figure}
+
+\subsection {Consoles virtuelles}
+
+Chaque processus dispose de deux descripteurs de fichier spéciaux : 0 correspond à l'entrée standard, et 1 à la sortie standard.
+En interne, les appels à cons\_read et cons\_write sont convertis en appels a read et à write :
+
+\begin{lstlisting}
+unsigned long cons_read(char* buf, unsigned long len)
+{
+    read(0, buf, len);
+}
+
+void console_putbytes(const char *buf, int len)
+{
+    write(1, buf, len);
+}
+\end{lstlisting}
+
+De cette manière, chaque processus dispose de ses propres entrées/sorties. Plus précisément : le processus \url{init} (seul à être lancé par le noyau) a pour entrée standard \url{/dev/kbd} et pour sortie standard \url{/dev/vc/0}.
+Ensuite, chaque processus hérite de l'entrée et la sortie standard de son père.
+De plus, un appel à l'une des deux fonctions suivantes permet de modifier les flux à la volée.
+\\
+\\
+
+\begin{lstlisting} 
+/* Change standard output */
+int set_stdout(const char* filename);
+
+/* Change standard input */
+int set_stdin(const char* filename);
+\end{lstlisting} 
+
+Une fois cette abstraction réalisée, il devient possible d'ajouter des consoles virtuelles au système : au lieu d'écrire directement dans la mémoire vidéo à l'adresse 0xB8000, on écrit en plus dans un tampon. Au moment de changer de console virtuelle (touches F1 à F4), il suffit de recopier le contenu du tampon vers la mémoire vidéo et de mettre à jour la position du curseur. On perd légèrement en performances, mais cela permet par exemple d'avoir plusieurs shells lancés en même temps.
+
+\begin{figure}[h!]
+\centering
+\includegraphics[width=14cm]{vc.eps}
+\end{figure}
+
+\subsection{Exemple d'utilisation : ls}
+
+Le shell dispose d'une commande "ls" qui permet d'obtenir des informations sur un fichier ou un répertoire. Dans le cas d'un répertoire, elle liste son contenu.
+
+\begin{lstlisting}
+static void shell_ls(int argc, char** argv)
+{
+    char * name;
+    if (argc>2) {
+        printf("Usage : ls <filename>\n");
+        return;
+    }
+    name = (argc == 2) ? argv[1] : ".";
+        
+    int fd = open(name);
+    if(fd<0) {
+        printf("No such file or directory\n");
+        return;
+    }
+
+    struct stat st;
+    if(fstat(fd, &st)<0) {
+        printf("Error in fstat\n");
+        return;
+    }
+
+    printf("Name : %s\n", st.name);
+    printf("Inode number : %d\n", st.inode);
+    if(st.type == FS_FILE) {
+        printf("Type : file\n");
+    } else if(st.type == FS_DIR) {
+        printf("Type : directory\n"); 
+        printf("Contents :\n");
+        int n = 0;
+        while(1) {
+            struct dirent dir;
+            int z = readdir(fd, &dir, n);
+            if (z ==  0) break; /*  EOF  */
+            if (z == -1) {      /* Error */
+                printf("Error reading directory entry #%d\n", n);
+                break;
+            }
+            printf("%4d %s\n",
+                dir.inode, dir.name);
+            n++;
+        }
+    } else {
+        printf("Type : <unknown>\n");
+    } 
+
+    if(close(fd)<0) {
+        printf("Error closing file\n");
+        return;
+    }
+}
+\end{lstlisting}
+
+\section{Extensions possibles}
+
+A partir des primitives implémentées, nous jugeons que plusieurs fonctionnalités sont implémentables assez rapidement (en une semaine ?). Avec celles-ci, notre système d'exploitation commencerait à être facilement utilisable.
+
+\subsection{Système de fenêtrage}
+On peut étendre le système de consoles virtuelles : plutôt que d'avoir 4 consoles $ 80 \times 25 $ caractères (donc plein écran), on peut faire des fenêtre plus petites sur un même espace. Il suffit d'ajouter un "z-index" qui permet de définir quelle console est au-dessus de quelle autre, et de redéfinir la fonction \url{vc_draw} en accord. Plusieurs espaces de travail sont alors visible en même temps.
+
+Un pilote de souris serait alors particulièrement le bienvenu pour déplacer et redimensionner ces fenêtres textuelles.
+
+\subsection{Système de fichiers "orienté stockage"}
+Un système de fichiers a pour vocation, au départ, de stocker des information.  Le VFS étant modulaire, il suffit d'implémenter les fonctions \url{read},\url{write}, \url{readdir} et \url{finddir} de \textit{FAT32} ou d'\textit{ext2}.
+Pour créer des fichiers (vides), une fonction comme \url{creat} serait également souhaitable.
+
+Bien sûr, le stockage n'aurait de sens que s'il est persistant, donc sur un lecteur de disque.
+
+\subsection{Pagination et chargement de code}
+
+Ainsi que décrit précédement, un système de pagination aurait été profitable, puisque grâce à lui nous aurions pu séparer le code des différents processus utilisateurs. Plus précisément, nous aurions pu faire l'association fichier - programme qui existe sur tous les systèmes d'exploitation modernes.
+
+\section*{Conclusion}
+
+Ce projet était la suite logique du cours de Conception de Systèmes d'Exploitation. Nous avons pu mettre en oeuvre des mécanismes complexes au premier abord, comme la commutation de contexte et le changement de niveau de privilèges, qui représentent peu de code mais qui nous on demandé beaucoup de réflexion.
+
+Cela a été également l'occasion d'écrire du code de bas-niveau, en C et en assembleur : nous avons en particulier découvert de petites astuces bien utiles, comme les étiquettes locales en assembleur (\url{0: jmp 0b} pour faire une boucle infinie), les attributs de gcc (\url{__attribute__((packed))} et \url{__attribute__((weak))} notamment) et l'assembleur inline.
+
+Au final, partir "de rien" (ou presque, puisque le système d'initialisation, de protection, de débogage et le pilote clavier étaient fournis) nous a permis d'apprendre la structure des systèmes d'exploitation. C'est d'autant plus vrai qu'à de nombreux endroits, nous avons dû nous inspirer de Minix ou de Linux pour concevoir notre projet.
+
+\end{document}

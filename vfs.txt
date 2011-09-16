@@ -1,0 +1,23 @@
+Architecture du VFS :
+
+
+/                               Racine
+    /proc                       Infos sur les processus
+    /sem                        Infos sur les semaphores
+    /sys                        Tweaks sur les periphériques
+        /console
+            /blink
+            /fg
+            /bg
+            /echo
+    /dev                        "Device nodes"
+        /null
+        /zero
+        /answer
+        /console
+        /vc                     Consoles virtuelles
+            /0
+            /1
+    /kikoo                      Fichier de test
+    /prog                       Programmes utilisateur
+        /test
